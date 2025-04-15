@@ -1,4 +1,4 @@
-# app.py (Versão Fase 4 - Corrigido para nova estrutura da Z-API)
+# app.py (Versão Fase 5 - Corrigido para compatibilidade Z-API 2025)
 import os
 import json
 from flask import Flask, request, jsonify
@@ -25,6 +25,7 @@ except ImportError:
     def add_message_to_history(*args, **kwargs): print("--- AVISO: add_message_to_history NÃO ESTÁ FUNCIONANDO (Import falhou) ---")
     def get_conversation_history(*args, **kwargs): print("--- AVISO: get_conversation_history NÃO ESTÁ FUNCIONANDO (Import falhou) ---"); return []
 
+# Carrega variáveis do .env
 load_dotenv()
 app = Flask(__name__)
 
@@ -33,7 +34,7 @@ ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
 ZAPI_BASE_URL = os.getenv("ZAPI_BASE_URL", "https://api.z-api.io")
 
-print("ℹ️ [App Startup] Inicializando banco de dados (se necessário)...")
+print("\u2139\ufe0f [App Startup] Inicializando banco de dados (se necessário)...")
 init_db()
 print("✅ [App Startup] Banco de dados pronto.")
 
@@ -46,32 +47,29 @@ def webhook_handler():
 
     if payload:
         print("--- Payload JSON Recebido ---")
-        print(json.dumps(payload, indent=2))
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
         print("-----------------------------")
 
         try:
-            # Compatível com nova estrutura da Z-API
-            is_message = (
-                payload.get('type') == 'message' or
-                payload.get('tipo') == 'message' or
-                'mensagem' in payload.get('texto', {})
-            )
-
             user_message = None
-            if 'mensagem' in payload.get('texto', {}):
-                user_message = payload['texto']['mensagem']
-
-            is_chat = user_message is not None
+            sender_phone = None
             from_me = payload.get('fromMe', False)
+
+            if isinstance(payload.get('texto'), dict) and 'mensagem' in payload['texto']:
+                user_message = payload['texto']['mensagem']
+                sender_phone = payload.get('telefone') or payload.get('from') or payload.get('author')
+                if isinstance(sender_phone, str):
+                    sender_phone = sender_phone.split('@')[0]
+                is_message = True
+                is_chat = True
+            else:
+                is_message = False
+                is_chat = False
 
             print(f"   -> Verificando: É mensagem? {is_message}, É chat? {is_chat}, Enviado por mim? {from_me}")
 
             if is_message and is_chat and not from_me:
                 print("   -> Payload parece ser uma mensagem de usuário recebida.")
-
-                sender_phone = payload.get('telefone') or payload.get('from') or payload.get('author')
-                if isinstance(sender_phone, str):
-                    sender_phone = sender_phone.split('@')[0]
 
                 print(f"   -> Extração: Remetente/SessionID={sender_phone}, Mensagem='{user_message}'")
 
@@ -116,6 +114,7 @@ def webhook_handler():
             print(f"❌ [Webhook] Erro GERAL ao tentar processar o payload JSON: {e}")
             import traceback
             traceback.print_exc()
+
     else:
         raw_data = request.get_data(as_text=True)
         print("--- Dados Brutos Recebidos (Não JSON?) ---")
