@@ -1,4 +1,4 @@
-# app.py (Versão Fase 5 - Corrigido com base real do payload Z-API)
+# app.py (Versão Final – Webhook Z-API compatível e robusto)
 import os
 import json
 from flask import Flask, request, jsonify
@@ -51,65 +51,53 @@ def webhook_handler():
         print("-----------------------------")
 
         try:
-            user_message = None
-            sender_phone = None
-            from_me = payload.get('fromMe', False)
+            user_message = payload.get("texto", {}).get("mensagem")
+            sender_phone = payload.get("telefone")
+            from_me = payload.get("fromMe", False)
 
-            # Verificação com base no novo formato da Z-API
-            if isinstance(payload.get('texto'), dict) and 'mensagem' in payload['texto']:
-                user_message = payload['texto']['mensagem']
-                sender_phone = payload.get('telefone') or payload.get('from') or payload.get('author')
-                if isinstance(sender_phone, str):
-                    sender_phone = sender_phone.split('@')[0]
-                is_message = True
-                is_chat = True
-            else:
-                is_message = False
-                is_chat = False
+            if not user_message or not sender_phone or from_me:
+                print("⚠️ Payload ignorado: sem mensagem, sem telefone ou enviado por mim.")
+                return jsonify({"status": "ignored"}), 200
 
-            print(f"   -> Verificando: É mensagem? {is_message}, É chat? {is_chat}, Enviado por mim? {from_me}")
+            if isinstance(sender_phone, str):
+                sender_phone = sender_phone.split("@")[0]
 
-            if is_message and is_chat and not from_me:
-                print("   -> Payload parece ser uma mensagem de usuário recebida.")
+            print(f"   -> Extração: Remetente/SessionID={sender_phone}, Mensagem='{user_message}'")
 
-                print(f"   -> Extração: Remetente/SessionID={sender_phone}, Mensagem='{user_message}'")
+            if sender_phone and user_message:
+                print(f"   -> Buscando histórico ANTES da msg atual para {sender_phone} no DB...")
+                conversation_history = get_conversation_history(sender_phone)
 
-                if sender_phone and user_message:
-                    print(f"   -> Buscando histórico ANTES da msg atual para {sender_phone} no DB...")
-                    conversation_history = get_conversation_history(sender_phone)
+                print(f"   -> Salvando mensagem ATUAL do usuário ({user_message[:20]}...) para {sender_phone} no DB...")
+                add_message_to_history(sender_phone, 'user', user_message)
 
-                    print(f"   -> Salvando mensagem ATUAL do usuário ({user_message[:20]}...) para {sender_phone} no DB...")
-                    add_message_to_history(sender_phone, 'user', user_message)
+                print(f"   -> Solicitando resposta da IA para: '{user_message[:50]}...' (com histórico: {len(conversation_history)} msgs)")
+                ai_response = gerar_resposta_openrouter(user_message, conversation_history)
 
-                    print(f"   -> Solicitando resposta da IA para: '{user_message[:50]}...' (com histórico: {len(conversation_history)} msgs)")
-                    ai_response = gerar_resposta_openrouter(user_message, conversation_history)
+                if ai_response:
+                    print(f"   -> Resposta da IA recebida: '{ai_response[:80]}...'")
+                    print(f"   -> Salvando resposta da IA para {sender_phone} no DB...")
+                    add_message_to_history(sender_phone, 'assistant', ai_response)
 
-                    if ai_response:
-                        print(f"   -> Resposta da IA recebida: '{ai_response[:80]}...'")
-                        print(f"   -> Salvando resposta da IA para {sender_phone} no DB...")
-                        add_message_to_history(sender_phone, 'assistant', ai_response)
-
-                        print(f"   -> Enviando resposta da IA para {sender_phone} via Z-API...")
-                        if not ZAPI_INSTANCE_ID or not ZAPI_TOKEN:
-                            print("   -> Falha ao enviar: Credenciais Z-API (ID ou Token) não configuradas.")
-                        else:
-                            success = send_zapi_message(
-                                phone=sender_phone,
-                                message=ai_response,
-                                instance_id=ZAPI_INSTANCE_ID,
-                                token=ZAPI_TOKEN,
-                                base_url=ZAPI_BASE_URL
-                            )
-                            if success:
-                                print("   -> Resposta da IA enviada com sucesso.")
-                            else:
-                                print("   -> Falha ao enviar resposta da IA.")
+                    print(f"   -> Enviando resposta da IA para {sender_phone} via Z-API...")
+                    if not ZAPI_INSTANCE_ID or not ZAPI_TOKEN:
+                        print("   -> Falha ao enviar: Credenciais Z-API (ID ou Token) não configuradas.")
                     else:
-                        print("   -> Não foi possível gerar uma resposta da IA.")
+                        success = send_zapi_message(
+                            phone=sender_phone,
+                            message=ai_response,
+                            instance_id=ZAPI_INSTANCE_ID,
+                            token=ZAPI_TOKEN,
+                            base_url=ZAPI_BASE_URL
+                        )
+                        if success:
+                            print("   -> Resposta da IA enviada com sucesso.")
+                        else:
+                            print("   -> Falha ao enviar resposta da IA.")
                 else:
-                    print("   -> Não foi possível extrair remetente ou mensagem válidos do payload.")
+                    print("   -> Não foi possível gerar uma resposta da IA.")
             else:
-                print("   -> Payload não parece ser uma mensagem de usuário recebida ou foi enviada pelo bot.")
+                print("   -> Dados incompletos após extração. Ignorado.")
 
         except Exception as e:
             print(f"❌ [Webhook] Erro GERAL ao tentar processar o payload JSON: {e}")
