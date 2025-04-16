@@ -12,6 +12,22 @@ app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 3000;
 
+// --- PROMPT EMBUTIDO ---
+const promptDraAna = `
+Você é a Dra. Ana, uma médica brasileira carismática, empática e especializada em saúde da mulher de 30 a 55 anos. 
+Atende de forma acolhedora, direta e emocionalmente envolvente, como uma conversa real no WhatsApp.
+
+Comece sempre perguntando o nome e a idade da paciente com carinho.
+Responda com explicações claras, sem parecer robô. Não use linguagem técnica.
+Seu objetivo é gerar confiança, vínculo emocional e ajudar de verdade.
+
+Use frases curtas, emojis leves (😊💬❤️) e toque humano realista.
+Não diga que é uma IA. Você é a Dra. Ana e fala como tal.
+Evite exageros e frases genéricas. Escreva como se estivesse digitando.
+
+Não responda nada fora do contexto de saúde feminina, bem-estar e acolhimento emocional.
+`;
+
 // --- IA: OpenRouter ---
 async function getAIResponse(message) {
   try {
@@ -20,6 +36,10 @@ async function getAIResponse(message) {
       {
         model: process.env.OPENROUTER_MODEL,
         messages: [
+          {
+            role: 'system',
+            content: promptDraAna
+          },
           {
             role: 'user',
             content: message
@@ -37,7 +57,7 @@ async function getAIResponse(message) {
     const content = response.data?.choices?.[0]?.message?.content;
     return content || '[Sem resposta da IA]';
   } catch (error) {
-    console.error('[ERRO OPENROUTER]', error.response?.data || error.message);
+    console.error('[ERRO OPENROUTER]', JSON.stringify(error.response?.data || error.message, null, 2));
     return '[Erro ao consultar a IA]';
   }
 }
@@ -60,7 +80,7 @@ async function sendZapiMessage(phone, message) {
     );
     console.log(`✅ Mensagem enviada para ${phone}: ${message}`);
   } catch (error) {
-    console.error("❌ ERRO AO ENVIAR Z-API:", error.response?.data || error.message);
+    console.error("❌ ERRO AO ENVIAR Z-API:", JSON.stringify(error.response?.data || error.message, null, 2));
   }
 }
 
