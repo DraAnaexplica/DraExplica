@@ -1,85 +1,92 @@
-require('dotenv').config();
-const express = require('express');
-const axios = require('axios');
-const bodyParser = require('body-parser');
+// index.js
+
+import express from 'express';
+import bodyParser from 'body-parser';
+import dotenv from 'dotenv';
+import axios from 'axios';
+
+dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
 
-const memoriaCurta = new Map();
+const PORT = process.env.PORT || 3000;
 
-const promptSistema = `
-Você é a Dra. Ana, uma médica carismática e empática que atende mulheres entre 30 e 55 anos via WhatsApp.
-Sua missão é ajudar a identificar causas hormonais e emocionais de sintomas íntimos, explicar com clareza e orientar o que a paciente deve cobrar dos médicos.
-Responda sempre com acolhimento, realismo e tom humano, como uma amiga com conhecimento médico profundo. Não mencione que é IA.
-`;
-
-app.post('/on-new-message', async (req, res) => {
-  const body = req.body;
-  console.log('[WEBHOOK RECEBIDO]', JSON.stringify(body, null, 2));
-
+// --- IA: OpenRouter ---
+async function getAIResponse(message) {
   try {
-    const fromMe = body.fromMe;
-    const senderPhone = body.phone;
-    const userMessage = body?.text?.message;
-
-    if (!userMessage || !senderPhone || fromMe) {
-      console.warn('⚠️ Ignorado: mensagem vazia, enviada por mim ou sem telefone.');
-      return res.status(400).send({ status: 'ignored' });
-    }
-
-    console.log(`📩 ${senderPhone}: ${userMessage}`);
-
-    const historico = memoriaCurta.get(senderPhone) || [];
-    historico.push({ role: 'user', content: userMessage });
-
-    const mensagens = [
-      { role: 'system', content: promptSistema },
-      ...(historico.length > 4 ? historico.slice(-4) : historico)
-    ];
-
-    const respostaIA = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
-      model: process.env.OPENROUTER_MODEL || 'google/gemini-1.5-flash',
-      messages: mensagens
-    }, {
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const respostaTexto = respostaIA.data.choices[0].message.content;
-    console.log(`🤖 Dra. Ana: ${respostaTexto}`);
-
-    memoriaCurta.set(senderPhone, [...mensagens, { role: 'assistant', content: respostaTexto }]);
-
-    await axios.post(
-      `https://api.z-api.io/instances/${process.env.Z_API_INSTANCE_ID}/token/${process.env.Z_API_INSTANCE_TOKEN}/send-text`,
+    const response = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
       {
-        phone: senderPhone,
-        message: respostaTexto
+        model: process.env.OPENROUTER_MODEL,
+        messages: [
+          {
+            role: 'user',
+            content: message
+          }
+        ]
       },
       {
         headers: {
-          'Content-Type': 'application/json',
-          'client-token': process.env.Z_API_CLIENT_TOKEN
+          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json'
         }
       }
     );
 
-    res.status(200).send({ status: 'resposta enviada' });
-
-  } catch (err) {
-    console.error('[ERRO INTERNO]', err?.response?.data || err.message);
-    res.status(500).send({ status: 'erro', detalhe: err.message });
+    const content = response.data?.choices?.[0]?.message?.content;
+    return content || '[Sem resposta da IA]';
+  } catch (error) {
+    console.error('[ERRO OPENROUTER]', error.response?.data || error.message);
+    return '[Erro ao consultar a IA]';
   }
+}
+
+// --- Enviar mensagem via Z-API ---
+async function sendZapiMessage(phone, message) {
+  try {
+    const response = await axios.post(
+      `https://api.z-api.io/instances/${process.env.ZAPI_INSTANCE_ID}/token/${process.env.ZAPI_INSTANCE_TOKEN}/send-text`,
+      {
+        phone: phone,
+        message: message
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Client-Token': process.env.ZAPI_CLIENT_TOKEN
+        }
+      }
+    );
+    console.log(`✅ Mensagem enviada para ${phone}: ${message}`);
+  } catch (error) {
+    console.error("❌ ERRO AO ENVIAR Z-API:", error.response?.data || error.message);
+  }
+}
+
+// --- Webhook ---
+app.post('/on-new-message', async (req, res) => {
+  const body = req.body;
+  console.log('[WEBHOOK RECEBIDO]', body);
+
+  const userMessage = body?.text?.message;
+  const phone = body?.phone;
+  const fromMe = body?.fromMe;
+
+  if (!userMessage || !phone || fromMe) {
+    console.warn('⚠️ Ignorado: mensagem vazia, enviada por mim ou sem telefone.');
+    return res.sendStatus(200);
+  }
+
+  console.log(`📩 ${phone}: ${userMessage}`);
+  const aiReply = await getAIResponse(userMessage);
+  console.log(`🤖 Dra. Ana: ${aiReply}`);
+
+  await sendZapiMessage(phone, aiReply);
+  res.sendStatus(200);
 });
 
-app.get('/', (req, res) => {
-  res.send('🤖 Dra. Ana está online!');
-});
-
-const PORT = process.env.PORT || 3000;
+// --- Start ---
 app.listen(PORT, () => {
   console.log(`✅ Servidor rodando em http://localhost:${PORT}`);
 });
