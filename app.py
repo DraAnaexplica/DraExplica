@@ -40,8 +40,7 @@ def get_openrouter_response(message_text):
 # --- Enviar mensagem via Z-API ---
 def send_zapi_message(phone_number, message_text):
     headers = {
-        "Content-Type": "application/json",
-        # "Client-Token": ZAPI_CLIENT_TOKEN  # Pode ser usado no cabeçalho também, se a API exigir
+        "Content-Type": "application/json"
     }
     payload = {
         "phone": phone_number,
@@ -66,7 +65,7 @@ def zapi_webhook():
     try:
         from_me = data.get('fromMe', False)
         user_message = data.get('texto', {}).get('mensagem')
-        sender_phone = data.get('telefone')
+        sender_phone = data.get('phone')  # <- CORREÇÃO AQUI
 
         print(f"-> user_message: {user_message}, sender_phone: {sender_phone}, from_me: {from_me}")
 
