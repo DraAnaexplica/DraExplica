@@ -1,21 +1,23 @@
 import os
+import json
 import requests
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
+# === Carrega variáveis de ambiente (.env) ===
 load_dotenv()
 app = Flask(__name__)
 
+# === Configurações ===
 ZAPI_INSTANCE_ID = os.getenv('ZAPI_INSTANCE_ID')
 ZAPI_CLIENT_TOKEN = os.getenv('ZAPI_CLIENT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'openai/gpt-3.5-turbo')
 
-ZAPI_BASE_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/client-token/{ZAPI_CLIENT_TOKEN}"
-ZAPI_SEND_TEXT_URL = f"{ZAPI_BASE_URL}/send-text"
+ZAPI_SEND_TEXT_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/client-token/{ZAPI_CLIENT_TOKEN}/send-text"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-
+# === Chamada à IA (OpenRouter) ===
 def get_openrouter_response(message_text):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -28,23 +30,17 @@ def get_openrouter_response(message_text):
     try:
         response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
         response.raise_for_status()
-        data = response.json()
-        return data.get('choices', [{}])[0].get('message', {}).get('content', '')
+        return response.json()['choices'][0]['message']['content']
     except Exception as e:
         print(f"[ERRO] OpenRouter: {e}")
         return None
 
-
+# === Envia resposta via Z-API ===
 def send_zapi_message(phone_number, message_text):
-    headers = {
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "phone": phone_number,
-        "message": message_text
-    }
+    headers = { "Content-Type": "application/json" }
+    payload = { "phone": phone_number, "message": message_text }
     try:
-        print(f"✅ Enviando para {phone_number}: {message_text[:60]}...")
+        print(f"📤 Enviando para {phone_number}: {message_text[:60]}...")
         response = requests.post(ZAPI_SEND_TEXT_URL, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
         return True
@@ -52,7 +48,7 @@ def send_zapi_message(phone_number, message_text):
         print(f"[ERRO] ao enviar resposta Z-API: {e}")
         return False
 
-
+# === Webhook Z-API ===
 @app.route('/webhook', methods=['POST'])
 def zapi_webhook():
     try:
@@ -61,34 +57,38 @@ def zapi_webhook():
         print(data)
 
         from_me = data.get("fromMe", False)
-        phone = data.get("phone")
-        texto = data.get("texto")
+        sender_phone = data.get("phone")
 
-        if not texto or not isinstance(texto, dict):
-            print("⚠️ Campo 'texto' ausente ou malformado.")
-            return jsonify({"status": "ignored"}), 200
+        # === Parsing correto do campo texto.mensagem ===
+        raw_texto = data.get("texto")
+        try:
+            if isinstance(raw_texto, str):
+                raw_texto = json.loads(raw_texto)
+            user_message = raw_texto.get("mensagem") if isinstance(raw_texto, dict) else None
+        except Exception as e:
+            print(f"[ERRO] Parsing do campo 'texto': {e}")
+            user_message = None
 
-        user_message = texto.get("mensagem")
+        print(f"-> user_message: {user_message}, sender_phone: {sender_phone}, from_me: {from_me}")
 
-        print(f"-> user_message: {user_message}, phone: {phone}, from_me: {from_me}")
-
-        if from_me or not user_message or not phone:
+        if from_me or not user_message or not sender_phone:
             print("⚠️ Ignorado: mensagem vazia, enviada por mim ou sem telefone.")
             return jsonify({"status": "ignored"}), 200
 
         ai_response = get_openrouter_response(user_message)
 
         if ai_response:
-            send_zapi_message(phone, ai_response)
+            send_zapi_message(sender_phone, ai_response)
         else:
             print("⚠️ Falha ao obter resposta da IA.")
 
     except Exception as e:
-        print(f"[ERRO] Processando webhook: {e}")
+        print(f"[ERRO] Webhook: {e}")
+        return jsonify({"status": "erro"}), 500
 
     return jsonify({"status": "success"}), 200
 
-
+# === Execução local ===
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
+    port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
