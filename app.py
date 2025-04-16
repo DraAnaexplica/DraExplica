@@ -1,10 +1,9 @@
-# app.py (Versão Final Corrigida – Blindado contra fromMe malformado)
+# app.py (Versão Final Corrigida – Verificação explícita de fromMe)
 import os
 import json
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
-# --- Importações seguras ---
 try:
     from utils.zapi_utils import send_zapi_message
 except ImportError:
@@ -25,7 +24,6 @@ except ImportError:
     def add_message_to_history(*args, **kwargs): print("--- AVISO: add_message_to_history NÃO FUNCIONA ---")
     def get_conversation_history(*args, **kwargs): print("--- AVISO: get_conversation_history NÃO FUNCIONA ---"); return []
 
-# --- Setup Inicial ---
 load_dotenv()
 app = Flask(__name__)
 
@@ -38,7 +36,6 @@ print("ℹ️ [App Startup] Inicializando banco de dados...")
 init_db()
 print("✅ [App Startup] Banco de dados pronto.")
 
-# --- Rota de Webhook ---
 @app.route('/webhook', methods=['POST'])
 def webhook_handler():
     print("===================================")
@@ -55,13 +52,13 @@ def webhook_handler():
             sender_phone = payload.get("telefone")
             from_me = payload.get("fromMe")
 
-            # ⚠️ Correção segura para fromMe malformado
+            # Correção segura
             if isinstance(from_me, str):
                 from_me = from_me.strip().lower() in ["true", "1", "sim", "yes"]
             if not isinstance(from_me, bool):
                 from_me = False
 
-            if not user_message or not sender_phone or from_me:
+            if not user_message or not sender_phone or from_me is True:
                 print("⚠️ Payload ignorado: sem mensagem, sem telefone ou enviado por mim.")
                 return jsonify({"status": "ignored"}), 200
 
@@ -70,14 +67,9 @@ def webhook_handler():
 
             print(f"   -> Extração: Remetente = {sender_phone}, Mensagem = '{user_message}'")
 
-            # Recuperar histórico
-            print(f"   -> Buscando histórico para {sender_phone}...")
             history = get_conversation_history(sender_phone)
-
-            # Salvar mensagem do usuário
             add_message_to_history(sender_phone, "user", user_message)
 
-            # Gerar resposta da IA
             print(f"   -> Gerando resposta via IA...")
             ai_response = gerar_resposta_openrouter(user_message, history)
 
@@ -109,13 +101,11 @@ def webhook_handler():
 
     return jsonify({"status": "received"}), 200
 
-# --- Health Check ---
 @app.route('/', methods=['GET'])
 def health_check():
     print("🩺 Health check solicitado!")
     return jsonify({"status": "ok", "message": "Servidor Dra. Ana rodando!"}), 200
 
-# --- Execução local ---
 if __name__ == '__main__':
     print(f"🚀 Servidor local em http://0.0.0.0:{APP_PORT}")
     app.run(host='0.0.0.0', port=APP_PORT, debug=True)
