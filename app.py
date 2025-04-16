@@ -1,4 +1,4 @@
-# app.py (Versão Final Estabilizada – Z-API com tolerância a fromMe malformado)
+# app.py (Versão Final Corrigida – Blindado contra fromMe malformado)
 import os
 import json
 from flask import Flask, request, jsonify
@@ -9,13 +9,13 @@ try:
     from utils.zapi_utils import send_zapi_message
 except ImportError:
     print("!!! ERRO DE IMPORT ZAPI !!!")
-    def send_zapi_message(*args, **kwargs): print("--- AVISO: send_zapi_message NÃO FUNCIONA (Import falhou) ---"); return False
+    def send_zapi_message(*args, **kwargs): print("--- AVISO: send_zapi_message NÃO FUNCIONA ---"); return False
 
 try:
     from utils.openrouter_utils import gerar_resposta_openrouter
 except ImportError:
     print("!!! ERRO DE IMPORT OPENROUTER !!!")
-    def gerar_resposta_openrouter(msg, history=None): print("--- AVISO: gerar_resposta_openrouter NÃO FUNCIONA (Import falhou) ---"); return "Desculpe, não consigo gerar uma resposta agora."
+    def gerar_resposta_openrouter(msg, history=None): print("--- AVISO: gerar_resposta_openrouter NÃO FUNCIONA ---"); return "Desculpe, não consigo gerar uma resposta agora."
 
 try:
     from utils.db_utils import init_db, add_message_to_history, get_conversation_history
@@ -55,11 +55,13 @@ def webhook_handler():
             sender_phone = payload.get("telefone")
             from_me = payload.get("fromMe")
 
-            # Corrige possíveis erros no valor de fromMe
+            # ⚠️ Correção segura para fromMe malformado
             if isinstance(from_me, str):
-                from_me = from_me.lower() in ["true", "1", "sim", "yes"]
+                from_me = from_me.strip().lower() in ["true", "1", "sim", "yes"]
+            if not isinstance(from_me, bool):
+                from_me = False
 
-            if not user_message or not sender_phone or from_me is True:
+            if not user_message or not sender_phone or from_me:
                 print("⚠️ Payload ignorado: sem mensagem, sem telefone ou enviado por mim.")
                 return jsonify({"status": "ignored"}), 200
 
@@ -83,8 +85,7 @@ def webhook_handler():
                 print(f"   -> Resposta da IA: {ai_response[:80]}...")
                 add_message_to_history(sender_phone, "assistant", ai_response)
 
-                # Enviar via Z-API
-                print(f"   -> Enviando resposta para {sender_phone} via Z-API...")
+                print(f"   -> Enviando resposta via Z-API...")
                 success = send_zapi_message(
                     phone=sender_phone,
                     message=ai_response,
