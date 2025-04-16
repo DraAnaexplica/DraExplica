@@ -1,5 +1,0 @@
-Flask>=3.0
-requests>=2.30
-python-dotenv>=1.0
-gunicorn>=21.0
-psycopg2-binary # Para conectar com PostgreSQL no Render
