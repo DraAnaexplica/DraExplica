@@ -3,7 +3,7 @@ import json
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
-# Utils
+# === IMPORTS COM TRATAMENTO DE FALHA ===
 try:
     from utils.zapi_utils import send_zapi_message
 except:
@@ -21,6 +21,7 @@ except:
     def add_message_to_history(*args, **kwargs): pass
     def get_conversation_history(*args, **kwargs): return []
 
+# === CONFIGURAÇÕES ===
 load_dotenv()
 app = Flask(__name__)
 APP_PORT = int(os.getenv("PORT", 5001))
@@ -32,6 +33,7 @@ print("ℹ️  Inicializando banco de dados...")
 init_db()
 print("✅ Banco de dados pronto.")
 
+# === ROTA PRINCIPAL DE WEBHOOK ===
 @app.route('/webhook', methods=['POST'])
 def webhook_handler():
     print("===================================")
@@ -45,14 +47,22 @@ def webhook_handler():
         print("❌ Erro ao parsear JSON:", e)
         return jsonify({"status": "error", "message": "invalid JSON"}), 400
 
-    # Correção do campo de mensagem
-    user_message = (
-        payload.get("texto", {}).get("mensagem") or
-        payload.get("message", {}).get("body") or
-        payload.get("message")
-    )
+    # === TRATAMENTO ROBUSTO DE MENSAGEM ===
+    user_message = None
 
-    # Correção do campo de telefone
+    if isinstance(payload.get("texto"), dict):
+        user_message = payload.get("texto", {}).get("mensagem")
+
+    if not user_message and isinstance(payload.get("message"), dict):
+        user_message = payload.get("message", {}).get("body")
+
+    if not user_message and isinstance(payload.get("message"), str):
+        user_message = payload.get("message")
+
+    if not user_message:
+        print("⚠️ Nenhuma mensagem reconhecida no payload.")
+
+    # === EXTRAÇÃO DE TELEFONE ===
     sender_phone = (
         payload.get("telefone") or
         payload.get("phone") or
@@ -72,6 +82,7 @@ def webhook_handler():
 
     sender_phone = str(sender_phone).split('@')[0]
 
+    # === HISTÓRICO + GERAÇÃO DE RESPOSTA ===
     history = get_conversation_history(sender_phone)
     add_message_to_history(sender_phone, "user", user_message)
 
@@ -94,9 +105,11 @@ def webhook_handler():
     print("✅ Mensagem enviada com sucesso." if success else "❌ Falha no envio.")
     return jsonify({"status": "ok"}), 200
 
+# === ROTA DE SAÚDE ===
 @app.route('/', methods=['GET'])
 def health_check():
     return jsonify({"status": "ok", "message": "Servidor Dra. Ana rodando!"}), 200
 
+# === EXECUÇÃO LOCAL ===
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=APP_PORT, debug=True)
