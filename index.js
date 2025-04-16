@@ -1,9 +1,8 @@
-// index.js
-
 import express from 'express';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import promptDraAna from './systemPrompt.js'; // NOVO
 
 dotenv.config();
 
@@ -20,6 +19,10 @@ async function getAIResponse(message) {
       {
         model: process.env.OPENROUTER_MODEL,
         messages: [
+          {
+            role: 'system',
+            content: promptDraAna // usa o prompt separado
+          },
           {
             role: 'user',
             content: message
