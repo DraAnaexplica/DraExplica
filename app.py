@@ -3,20 +3,20 @@ import requests
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
-# Carregar .env
+# Carregar variáveis do .env
 load_dotenv()
 app = Flask(__name__)
 
-# Configurações
+# --- Configurações ---
 ZAPI_INSTANCE_ID = os.getenv('ZAPI_INSTANCE_ID')
-ZAPI_CLIENT_TOKEN = os.getenv('ZAPI_CLIENT_TOKEN')
+ZAPI_CLIENT_TOKEN = os.getenv('ZAPI_CLIENT_TOKEN')  # Token da instância
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'openai/gpt-3.5-turbo')
 
-ZAPI_SEND_TEXT_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/client-token/{ZAPI_CLIENT_TOKEN}/send-text"
+ZAPI_SEND_TEXT_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_CLIENT_TOKEN}/send-text"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Função IA
+# --- Chamada à IA ---
 def get_openrouter_response(message_text):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -34,20 +34,27 @@ def get_openrouter_response(message_text):
         print(f"[ERRO] OpenRouter: {e}")
         return None
 
-# Enviar resposta via Z-API
+# --- Envio via Z-API ---
 def send_zapi_message(phone_number, message_text):
-    headers = {"Content-Type": "application/json"}
-    payload = {"phone": phone_number, "message": message_text}
+    headers = {
+        "Content-Type": "application/json",
+        "client-token": ZAPI_CLIENT_TOKEN  # ⚠️ Cabeçalho obrigatório segundo a documentação
+    }
+    payload = {
+        "phone": phone_number,
+        "message": message_text
+    }
     try:
-        print(f"📤 Enviando resposta para {phone_number}: {message_text[:60]}...")
+        print(f"📤 Enviando para {phone_number}: {message_text[:60]}...")
         response = requests.post(ZAPI_SEND_TEXT_URL, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
+        print(f"✅ Mensagem enviada com sucesso.")
         return True
     except Exception as e:
         print(f"[ERRO] Envio Z-API: {e}")
         return False
 
-# Webhook
+# --- Webhook ---
 @app.route('/webhook', methods=['POST'])
 def zapi_webhook():
     try:
@@ -78,7 +85,7 @@ def zapi_webhook():
 
     return jsonify({"status": "success"}), 200
 
-# Execução local
+# --- Execução local ---
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
