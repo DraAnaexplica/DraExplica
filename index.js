@@ -1,8 +1,10 @@
+// index.js
+
 import express from 'express';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
 import axios from 'axios';
-import promptDraAna from './systemPrompt.js'; // NOVO
+import promptDraAna from './systemPrompt.js'; // <- PROMPT EXTERNO
 
 dotenv.config();
 
@@ -21,7 +23,7 @@ async function getAIResponse(message) {
         messages: [
           {
             role: 'system',
-            content: promptDraAna // usa o prompt separado
+            content: promptDraAna
           },
           {
             role: 'user',
@@ -40,7 +42,7 @@ async function getAIResponse(message) {
     const content = response.data?.choices?.[0]?.message?.content;
     return content || '[Sem resposta da IA]';
   } catch (error) {
-    console.error('[ERRO OPENROUTER]', error.response?.data || error.message);
+    console.error('[ERRO OPENROUTER]', JSON.stringify(error.response?.data || error.message, null, 2));
     return '[Erro ao consultar a IA]';
   }
 }
@@ -63,7 +65,7 @@ async function sendZapiMessage(phone, message) {
     );
     console.log(`✅ Mensagem enviada para ${phone}: ${message}`);
   } catch (error) {
-    console.error("❌ ERRO AO ENVIAR Z-API:", error.response?.data || error.message);
+    console.error("❌ ERRO AO ENVIAR Z-API:", JSON.stringify(error.response?.data || error.message, null, 2));
   }
 }
 
