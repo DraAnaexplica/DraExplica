@@ -1,85 +1,97 @@
-# app.py
 import os
-import json
+import requests
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
-# --- Importa os utilitários ---
-from utils.zapi_utils import send_zapi_message
-from utils.openrouter_utils import gerar_resposta_openrouter
-from utils.db_utils import init_db, add_message_to_history, get_conversation_history
-
-# Carrega variáveis de ambiente
+# Carrega variáveis do .env
 load_dotenv()
 
-# Flask App
+# Inicializa o app Flask
 app = Flask(__name__)
 
-# Configurações
-APP_PORT = int(os.getenv("PORT", 5001))
+# --- Configurações ---
 ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
-ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
-ZAPI_BASE_URL = os.getenv("ZAPI_BASE_URL", "https://api.z-api.io")
+ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN")
+ZAPI_BASE_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_CLIENT_TOKEN}"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.0-flash-001")
 
-# Inicializa DB
-print("ℹ️  Inicializando banco de dados...")
-init_db()
-print("✅ Banco de dados pronto.")
+# --- Endpoint do OpenRouter ---
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Webhook principal
+
+def get_openrouter_response(message_text):
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [
+            {"role": "user", "content": message_text}
+        ]
+    }
+    try:
+        response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    except Exception as e:
+        print(f"❌ Erro ao chamar OpenRouter: {e}")
+        return None
+
+
+def send_zapi_message(phone, message):
+    headers = {
+        "Content-Type": "application/json",
+        "Client-Token": ZAPI_CLIENT_TOKEN
+    }
+    payload = {
+        "phone": phone,
+        "message": message
+    }
+    try:
+        print(f"📤 Enviando mensagem para {phone}: {message}")
+        response = requests.post(f"{ZAPI_BASE_URL}/send-text", json=payload, headers=headers, timeout=30)
+        response.raise_for_status()
+        print("✅ Mensagem enviada com sucesso pela Z-API")
+        return True
+    except Exception as e:
+        print(f"❌ Erro ao enviar mensagem pela Z-API: {e}")
+        return False
+
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    print("==================================")
-    print("🔔 Webhook Recebido! (POST)")
-    payload = request.get_json()
+    data = request.get_json()
+    print("\n🔔 Webhook Recebido! (POST)")
+    print("📦 Payload:", data)
 
-    if not payload:
-        print("❌ Nenhum JSON recebido.")
-        return jsonify({"erro": "sem conteúdo"}), 400
-
-    print("📦 Dados recebidos (brutos):", json.dumps(payload, indent=2))
-
-    # --- NOVA ESTRUTURA DA Z-API ---
-    sender_phone = payload.get("phone")
-    from_me = payload.get("fromMe", False)
-    user_message = None
-
-    if "texto" in payload and isinstance(payload["texto"], dict):
-        user_message = payload["texto"].get("mensagem")
+    # Novos nomes reais conforme Z-API (ajustado ao seu payload)
+    user_message = data.get("texto", {}).get("mensagem")
+    sender_phone = data.get("telefone")
+    from_me = data.get("fromMe", True)
 
     print(f"   -> Verificando: user_message='{user_message}', sender_phone='{sender_phone}', from_me={from_me}")
-    print(f"   -> Avaliação: not user_message={not user_message}, not sender_phone={not sender_phone}, from_me={from_me}")
 
     if not user_message or not sender_phone or from_me:
         print("⚠️ Payload ignorado: sem mensagem, sem telefone ou enviado por mim.")
         return jsonify({"status": "ignored"}), 200
 
-    # Recupera histórico
-    conversation_history = get_conversation_history(sender_phone)
-    add_message_to_history(sender_phone, "user", user_message)
-
-    # Gera resposta
-    ai_response = gerar_resposta_openrouter(user_message, conversation_history)
+    ai_response = get_openrouter_response(user_message)
     if ai_response:
-        add_message_to_history(sender_phone, "assistant", ai_response)
-        success = send_zapi_message(
-            phone=sender_phone,
-            message=ai_response,
-            instance_id=ZAPI_INSTANCE_ID,
-            token=ZAPI_TOKEN,
-            base_url=ZAPI_BASE_URL
-        )
-        print("✅ Resposta enviada com sucesso" if success else "❌ Falha ao enviar resposta")
+        send_zapi_message(sender_phone, ai_response)
     else:
-        print("⚠️ Falha ao gerar resposta da IA.")
+        print("⚠️ OpenRouter não respondeu adequadamente.")
 
-    return jsonify({"status": "ok"}), 200
+    return jsonify({"status": "success"}), 200
 
-# Health check
+
 @app.route("/", methods=["GET"])
-def check():
-    return jsonify({"status": "ok", "message": "Servidor Dra. Ana rodando!"})
+def health():
+    return jsonify({"status": "ok", "message": "Servidor online."})
+
 
 if __name__ == "__main__":
-    print(f"🚀 Servidor rodando em http://0.0.0.0:{APP_PORT}")
-    app.run(host="0.0.0.0", port=APP_PORT, debug=True)
+    port = int(os.getenv("PORT", 5001))
+    app.run(host="0.0.0.0", port=port)
