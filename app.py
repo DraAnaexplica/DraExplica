@@ -1,31 +1,31 @@
-# app.py (Versão Final – Webhook Z-API compatível e robusto)
+# app.py (Versão Final Estabilizada – Z-API com tolerância a fromMe malformado)
 import os
 import json
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
-# --- Importa as funções dos utils ---
+# --- Importações seguras ---
 try:
     from utils.zapi_utils import send_zapi_message
 except ImportError:
     print("!!! ERRO DE IMPORT ZAPI !!!")
-    def send_zapi_message(*args, **kwargs): print("--- AVISO: send_zapi_message NÃO ESTÁ FUNCIONANDO (Import falhou) ---"); return False
+    def send_zapi_message(*args, **kwargs): print("--- AVISO: send_zapi_message NÃO FUNCIONA (Import falhou) ---"); return False
 
 try:
     from utils.openrouter_utils import gerar_resposta_openrouter
 except ImportError:
     print("!!! ERRO DE IMPORT OPENROUTER !!!")
-    def gerar_resposta_openrouter(mensagem, history=None): print("--- AVISO: gerar_resposta_openrouter NÃO ESTÁ FUNCIONANDO (Import falhou) ---"); return "Desculpe, não consigo gerar uma resposta agora."
+    def gerar_resposta_openrouter(msg, history=None): print("--- AVISO: gerar_resposta_openrouter NÃO FUNCIONA (Import falhou) ---"); return "Desculpe, não consigo gerar uma resposta agora."
 
 try:
     from utils.db_utils import init_db, add_message_to_history, get_conversation_history
 except ImportError:
     print("!!! ERRO DE IMPORT DB UTILS !!!")
-    def init_db(): print("--- AVISO: init_db NÃO ESTÁ FUNCIONANDO (Import falhou) ---")
-    def add_message_to_history(*args, **kwargs): print("--- AVISO: add_message_to_history NÃO ESTÁ FUNCIONANDO (Import falhou) ---")
-    def get_conversation_history(*args, **kwargs): print("--- AVISO: get_conversation_history NÃO ESTÁ FUNCIONANDO (Import falhou) ---"); return []
+    def init_db(): print("--- AVISO: init_db NÃO FUNCIONA ---")
+    def add_message_to_history(*args, **kwargs): print("--- AVISO: add_message_to_history NÃO FUNCIONA ---")
+    def get_conversation_history(*args, **kwargs): print("--- AVISO: get_conversation_history NÃO FUNCIONA ---"); return []
 
-# Carrega variáveis do .env
+# --- Setup Inicial ---
 load_dotenv()
 app = Flask(__name__)
 
@@ -34,15 +34,15 @@ ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
 ZAPI_BASE_URL = os.getenv("ZAPI_BASE_URL", "https://api.z-api.io")
 
-print("ℹ️ [App Startup] Inicializando banco de dados (se necessário)...")
+print("ℹ️ [App Startup] Inicializando banco de dados...")
 init_db()
 print("✅ [App Startup] Banco de dados pronto.")
 
+# --- Rota de Webhook ---
 @app.route('/webhook', methods=['POST'])
 def webhook_handler():
     print("===================================")
     print(f"🔔 Webhook Recebido! ({request.method})")
-
     payload = request.get_json()
 
     if payload:
@@ -53,70 +53,68 @@ def webhook_handler():
         try:
             user_message = payload.get("texto", {}).get("mensagem")
             sender_phone = payload.get("telefone")
-            from_me = payload.get("fromMe", False)
+            from_me = payload.get("fromMe")
 
-            if not user_message or not sender_phone or from_me:
+            # Corrige possíveis erros no valor de fromMe
+            if isinstance(from_me, str):
+                from_me = from_me.lower() in ["true", "1", "sim", "yes"]
+
+            if not user_message or not sender_phone or from_me is True:
                 print("⚠️ Payload ignorado: sem mensagem, sem telefone ou enviado por mim.")
                 return jsonify({"status": "ignored"}), 200
 
             if isinstance(sender_phone, str):
                 sender_phone = sender_phone.split("@")[0]
 
-            print(f"   -> Extração: Remetente/SessionID={sender_phone}, Mensagem='{user_message}'")
+            print(f"   -> Extração: Remetente = {sender_phone}, Mensagem = '{user_message}'")
 
-            if sender_phone and user_message:
-                print(f"   -> Buscando histórico ANTES da msg atual para {sender_phone} no DB...")
-                conversation_history = get_conversation_history(sender_phone)
+            # Recuperar histórico
+            print(f"   -> Buscando histórico para {sender_phone}...")
+            history = get_conversation_history(sender_phone)
 
-                print(f"   -> Salvando mensagem ATUAL do usuário ({user_message[:20]}...) para {sender_phone} no DB...")
-                add_message_to_history(sender_phone, 'user', user_message)
+            # Salvar mensagem do usuário
+            add_message_to_history(sender_phone, "user", user_message)
 
-                print(f"   -> Solicitando resposta da IA para: '{user_message[:50]}...' (com histórico: {len(conversation_history)} msgs)")
-                ai_response = gerar_resposta_openrouter(user_message, conversation_history)
+            # Gerar resposta da IA
+            print(f"   -> Gerando resposta via IA...")
+            ai_response = gerar_resposta_openrouter(user_message, history)
 
-                if ai_response:
-                    print(f"   -> Resposta da IA recebida: '{ai_response[:80]}...'")
-                    print(f"   -> Salvando resposta da IA para {sender_phone} no DB...")
-                    add_message_to_history(sender_phone, 'assistant', ai_response)
+            if ai_response:
+                print(f"   -> Resposta da IA: {ai_response[:80]}...")
+                add_message_to_history(sender_phone, "assistant", ai_response)
 
-                    print(f"   -> Enviando resposta da IA para {sender_phone} via Z-API...")
-                    if not ZAPI_INSTANCE_ID or not ZAPI_TOKEN:
-                        print("   -> Falha ao enviar: Credenciais Z-API (ID ou Token) não configuradas.")
-                    else:
-                        success = send_zapi_message(
-                            phone=sender_phone,
-                            message=ai_response,
-                            instance_id=ZAPI_INSTANCE_ID,
-                            token=ZAPI_TOKEN,
-                            base_url=ZAPI_BASE_URL
-                        )
-                        if success:
-                            print("   -> Resposta da IA enviada com sucesso.")
-                        else:
-                            print("   -> Falha ao enviar resposta da IA.")
-                else:
-                    print("   -> Não foi possível gerar uma resposta da IA.")
+                # Enviar via Z-API
+                print(f"   -> Enviando resposta para {sender_phone} via Z-API...")
+                success = send_zapi_message(
+                    phone=sender_phone,
+                    message=ai_response,
+                    instance_id=ZAPI_INSTANCE_ID,
+                    token=ZAPI_TOKEN,
+                    base_url=ZAPI_BASE_URL
+                )
+                print("✅ Mensagem enviada com sucesso." if success else "❌ Falha no envio via Z-API.")
             else:
-                print("   -> Dados incompletos após extração. Ignorado.")
+                print("⚠️ IA não gerou resposta.")
 
         except Exception as e:
-            print(f"❌ [Webhook] Erro GERAL ao tentar processar o payload JSON: {e}")
+            print(f"❌ ERRO GERAL no processamento: {e}")
             import traceback
             traceback.print_exc()
-
     else:
         raw_data = request.get_data(as_text=True)
-        print("--- Dados Brutos Recebidos (Não JSON?) ---")
+        print("--- Payload bruto recebido ---")
         print(raw_data)
         print("-----------------------------")
 
     return jsonify({"status": "received"}), 200
 
+# --- Health Check ---
 @app.route('/', methods=['GET'])
 def health_check():
     print("🩺 Health check solicitado!")
     return jsonify({"status": "ok", "message": "Servidor Dra. Ana rodando!"}), 200
 
+# --- Execução local ---
 if __name__ == '__main__':
-    print(f"🚀 Iniciando servidor Flask local em http://0.0.0.0:{APP_PORT}")
+    print(f"🚀 Servidor local em http://0.0.0.0:{APP_PORT}")
     app.run(host='0.0.0.0', port=APP_PORT, debug=True)
