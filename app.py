@@ -1,125 +1,100 @@
-# app.py (Versão Z-API Corrigida e Blindada + Logs Detalhados de Verificação)
+# app.py (Versão robusta com verificação de JSON e logs seguros)
 import os
 import json
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
+# Utils
 try:
     from utils.zapi_utils import send_zapi_message
-except ImportError:
-    print("!!! ERRO DE IMPORT ZAPI !!!")
-    def send_zapi_message(*args, **kwargs): print("--- AVISO: send_zapi_message NÃO FUNCIONA ---"); return False
+except:
+    def send_zapi_message(*args, **kwargs): return False
 
 try:
     from utils.openrouter_utils import gerar_resposta_openrouter
-except ImportError:
-    print("!!! ERRO DE IMPORT OPENROUTER !!!")
-    def gerar_resposta_openrouter(msg, history=None): print("--- AVISO: gerar_resposta_openrouter NÃO FUNCIONA ---"); return "Desculpe, não consigo gerar uma resposta agora."
+except:
+    def gerar_resposta_openrouter(mensagem, history=None): return "..."
 
 try:
     from utils.db_utils import init_db, add_message_to_history, get_conversation_history
-except ImportError:
-    print("!!! ERRO DE IMPORT DB UTILS !!!")
-    def init_db(): print("--- AVISO: init_db NÃO FUNCIONA ---")
-    def add_message_to_history(*args, **kwargs): print("--- AVISO: add_message_to_history NÃO FUNCIONA ---")
-    def get_conversation_history(*args, **kwargs): print("--- AVISO: get_conversation_history NÃO FUNCIONA ---"); return []
+except:
+    def init_db(): pass
+    def add_message_to_history(*args, **kwargs): pass
+    def get_conversation_history(*args, **kwargs): return []
 
 load_dotenv()
 app = Flask(__name__)
-
 APP_PORT = int(os.getenv("PORT", 5001))
 ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
 ZAPI_BASE_URL = os.getenv("ZAPI_BASE_URL", "https://api.z-api.io")
 
-print("ℹ️ [App Startup] Inicializando banco de dados...")
+print("ℹ️  Inicializando banco de dados...")
 init_db()
-print("✅ [App Startup] Banco de dados pronto.")
+print("✅ Banco de dados pronto.")
 
 @app.route('/webhook', methods=['POST'])
 def webhook_handler():
     print("===================================")
-    print(f"🔔 Webhook Recebido! ({request.method})")
-    payload = request.get_json()
+    print("🔔 Webhook Recebido! (POST)")
 
-    if payload:
-        print("--- Payload JSON Recebido ---")
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-        print("-----------------------------")
-
-        try:
-            user_message = None
-            sender_phone = None
-
-            if "texto" in payload and isinstance(payload["texto"], dict):
-                user_message = payload["texto"].get("mensagem")
-
-            if not user_message:
-                user_message = payload.get("mensagem") or payload.get("message")
-
-            sender_phone = payload.get("telefone") or payload.get("author") or payload.get("from")
-            if isinstance(sender_phone, str):
-                sender_phone = sender_phone.split("@")[0]
-
-            try:
-                from_me = payload.get("fromMe", False)
-                if isinstance(from_me, str):
-                    from_me = from_me.strip().lower() in ["true", "1", "sim", "yes"]
-                elif not isinstance(from_me, bool):
-                    from_me = False
-            except Exception as e:
-                print("⚠️ Erro ao interpretar fromMe:", e)
-                from_me = False
-
-            # 🔍 Logs detalhados da verificação
-            print(f"   -> Verificando condição: user_message='{user_message}', sender_phone='{sender_phone}', from_me={from_me}")
-            print(f"   -> Avaliação: not user_message={not user_message}, not sender_phone={not sender_phone}, from_me={from_me}")
-
-            if not user_message or not sender_phone or from_me:
-                print("⚠️ Payload ignorado: sem mensagem, sem telefone ou enviado por mim.")
-                return jsonify({"status": "ignored"}), 200
-
-            print(f"   -> Extração: Remetente = {sender_phone}, Mensagem = '{user_message}'")
-
-            history = get_conversation_history(sender_phone)
-            add_message_to_history(sender_phone, "user", user_message)
-
-            print(f"   -> Gerando resposta via IA...")
-            ai_response = gerar_resposta_openrouter(user_message, history)
-
-            if ai_response:
-                print(f"   -> Resposta da IA: {ai_response[:80]}...")
-                add_message_to_history(sender_phone, "assistant", ai_response)
-
-                print(f"   -> Enviando resposta via Z-API...")
-                success = send_zapi_message(
-                    phone=sender_phone,
-                    message=ai_response,
-                    instance_id=ZAPI_INSTANCE_ID,
-                    token=ZAPI_TOKEN,
-                    base_url=ZAPI_BASE_URL
-                )
-                print("✅ Mensagem enviada com sucesso." if success else "❌ Falha no envio via Z-API.")
-            else:
-                print("⚠️ IA não gerou resposta.")
-
-        except Exception as e:
-            print(f"❌ ERRO GERAL no processamento: {e}")
-            import traceback
-            traceback.print_exc()
-    else:
+    # Força leitura bruta e parse manual do JSON
+    try:
         raw_data = request.get_data(as_text=True)
-        print("--- Payload bruto recebido ---")
-        print(raw_data)
-        print("-----------------------------")
+        print("📦 Dados recebidos (brutos):", raw_data)
+        payload = json.loads(raw_data)
+    except Exception as e:
+        print("❌ Erro ao parsear JSON:", e)
+        return jsonify({"status": "error", "message": "invalid JSON"}), 400
 
-    return jsonify({"status": "received"}), 200
+    # Tentativa de extração com fallback seguro
+    user_message = (
+        payload.get("texto", {}).get("mensagem") or
+        payload.get("message", {}).get("body") or
+        payload.get("message")
+    )
+    sender_phone = (
+        payload.get("telefone") or
+        payload.get("author") or
+        payload.get("from") or
+        payload.get("sender", {}).get("id")
+    )
+    from_me = payload.get("fromMe", False)
+
+    print(f"   -> Verificando: user_message='{user_message}', sender_phone='{sender_phone}', from_me={from_me}")
+    print(f"   -> Avaliação: not user_message={not user_message}, not sender_phone={not sender_phone}, from_me={from_me}")
+
+    if not user_message or not sender_phone or from_me:
+        print("⚠️ Payload ignorado: sem mensagem, sem telefone ou enviado por mim.")
+        return jsonify({"status": "ignored"}), 200
+
+    sender_phone = str(sender_phone).split('@')[0]
+
+    history = get_conversation_history(sender_phone)
+    add_message_to_history(sender_phone, "user", user_message)
+
+    ai_response = gerar_resposta_openrouter(user_message, history)
+    if not ai_response:
+        print("⚠️ IA não respondeu.")
+        return jsonify({"status": "no response"}), 200
+
+    print(f"🤖 Resposta da IA: {ai_response[:80]}")
+    add_message_to_history(sender_phone, "assistant", ai_response)
+
+    success = send_zapi_message(
+        phone=sender_phone,
+        message=ai_response,
+        instance_id=ZAPI_INSTANCE_ID,
+        token=ZAPI_TOKEN,
+        base_url=ZAPI_BASE_URL
+    )
+
+    print("✅ Mensagem enviada com sucesso." if success else "❌ Falha no envio.")
+    return jsonify({"status": "ok"}), 200
 
 @app.route('/', methods=['GET'])
 def health_check():
-    print("🩺 Health check solicitado!")
     return jsonify({"status": "ok", "message": "Servidor Dra. Ana rodando!"}), 200
 
 if __name__ == '__main__':
-    print(f"🚀 Servidor local em http://0.0.0.0:{APP_PORT}")
-    app.run(host='0.0.0.0', port=APP_PORT, debug=True)
+    app.run(host="0.0.0.0", port=APP_PORT, debug=True)
