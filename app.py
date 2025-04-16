@@ -1,4 +1,4 @@
-# app.py (Versão Z-API Corrigida e Blindada)
+# app.py (Versão Z-API Corrigida e Blindada + Logs Detalhados de Verificação)
 import os
 import json
 from flask import Flask, request, jsonify
@@ -51,20 +51,16 @@ def webhook_handler():
             user_message = None
             sender_phone = None
 
-            # Detecta a estrutura da Z-API (texto -> mensagem)
             if "texto" in payload and isinstance(payload["texto"], dict):
                 user_message = payload["texto"].get("mensagem")
 
-            # Fallback genérico
             if not user_message:
                 user_message = payload.get("mensagem") or payload.get("message")
 
-            # Verifica o telefone em múltiplas fontes
             sender_phone = payload.get("telefone") or payload.get("author") or payload.get("from")
             if isinstance(sender_phone, str):
                 sender_phone = sender_phone.split("@")[0]
 
-            # fromMe interpretação defensiva
             try:
                 from_me = payload.get("fromMe", False)
                 if isinstance(from_me, str):
@@ -74,6 +70,10 @@ def webhook_handler():
             except Exception as e:
                 print("⚠️ Erro ao interpretar fromMe:", e)
                 from_me = False
+
+            # 🔍 Logs detalhados da verificação
+            print(f"   -> Verificando condição: user_message='{user_message}', sender_phone='{sender_phone}', from_me={from_me}")
+            print(f"   -> Avaliação: not user_message={not user_message}, not sender_phone={not sender_phone}, from_me={from_me}")
 
             if not user_message or not sender_phone or from_me:
                 print("⚠️ Payload ignorado: sem mensagem, sem telefone ou enviado por mim.")
