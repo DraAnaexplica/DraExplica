@@ -1,4 +1,4 @@
-# app.py (Versão Fase 5 - Corrigido para compatibilidade Z-API 2025)
+# app.py (Versão Fase 5 - Corrigido com base real do payload Z-API)
 import os
 import json
 from flask import Flask, request, jsonify
@@ -34,7 +34,7 @@ ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
 ZAPI_BASE_URL = os.getenv("ZAPI_BASE_URL", "https://api.z-api.io")
 
-print("\u2139\ufe0f [App Startup] Inicializando banco de dados (se necessário)...")
+print("ℹ️ [App Startup] Inicializando banco de dados (se necessário)...")
 init_db()
 print("✅ [App Startup] Banco de dados pronto.")
 
@@ -55,6 +55,7 @@ def webhook_handler():
             sender_phone = None
             from_me = payload.get('fromMe', False)
 
+            # Verificação com base no novo formato da Z-API
             if isinstance(payload.get('texto'), dict) and 'mensagem' in payload['texto']:
                 user_message = payload['texto']['mensagem']
                 sender_phone = payload.get('telefone') or payload.get('from') or payload.get('author')
