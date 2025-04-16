@@ -3,27 +3,36 @@ import json
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
-# === IMPORTS COM TRATAMENTO DE FALHA ===
+# --- Importações com fallback ---
 try:
     from utils.zapi_utils import send_zapi_message
-except:
-    def send_zapi_message(*args, **kwargs): return False
+except ImportError:
+    def send_zapi_message(*args, **kwargs):
+        print("[WARN] Função send_zapi_message não disponível.")
+        return False
 
 try:
     from utils.openrouter_utils import gerar_resposta_openrouter
-except:
-    def gerar_resposta_openrouter(mensagem, history=None): return "..."
+except ImportError:
+    def gerar_resposta_openrouter(mensagem, history=None):
+        print("[WARN] Função gerar_resposta_openrouter não disponível.")
+        return "Desculpe, não consigo responder agora."
 
 try:
     from utils.db_utils import init_db, add_message_to_history, get_conversation_history
-except:
-    def init_db(): pass
-    def add_message_to_history(*args, **kwargs): pass
-    def get_conversation_history(*args, **kwargs): return []
+except ImportError:
+    def init_db():
+        print("[WARN] init_db não disponível.")
+    def add_message_to_history(*args, **kwargs):
+        print("[WARN] add_message_to_history não disponível.")
+    def get_conversation_history(*args, **kwargs):
+        print("[WARN] get_conversation_history não disponível.")
+        return []
 
-# === CONFIGURAÇÕES ===
+# --- Inicialização ---
 load_dotenv()
 app = Flask(__name__)
+
 APP_PORT = int(os.getenv("PORT", 5001))
 ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
@@ -33,26 +42,36 @@ print("ℹ️  Inicializando banco de dados...")
 init_db()
 print("✅ Banco de dados pronto.")
 
-# === ROTA PRINCIPAL DE WEBHOOK ===
+
+# --- Webhook ---
 @app.route('/webhook', methods=['POST'])
-def webhook_handler():
-    print("===================================")
+def webhook():
+    print("==================================")
     print("🔔 Webhook Recebido! (POST)")
 
+    raw_data = request.get_data(as_text=True)
+    print(f"📦 Dados recebidos (brutos): {raw_data}")
+
     try:
-        raw_data = request.get_data(as_text=True)
-        print("📦 Dados recebidos (brutos):", raw_data)
         payload = json.loads(raw_data)
     except Exception as e:
-        print("❌ Erro ao parsear JSON:", e)
-        return jsonify({"status": "error", "message": "invalid JSON"}), 400
+        print(f"❌ Erro ao decodificar JSON: {e}")
+        return jsonify({"status": "erro", "detalhe": "json inválido"}), 400
 
-    # === TRATAMENTO ROBUSTO DE MENSAGEM ===
+    # --- Extração robusta da mensagem ---
     user_message = None
+    texto = payload.get("texto")
 
-    if isinstance(payload.get("texto"), dict):
-        user_message = payload.get("texto", {}).get("mensagem")
+    if isinstance(texto, dict):
+        user_message = texto.get("mensagem")
+    elif isinstance(texto, str):
+        try:
+            texto_dict = json.loads(texto)
+            user_message = texto_dict.get("mensagem")
+        except:
+            print("⚠️ Campo 'texto' mal formatado.")
 
+    # Alternativas adicionais (fallback)
     if not user_message and isinstance(payload.get("message"), dict):
         user_message = payload.get("message", {}).get("body")
 
@@ -62,7 +81,7 @@ def webhook_handler():
     if not user_message:
         print("⚠️ Nenhuma mensagem reconhecida no payload.")
 
-    # === EXTRAÇÃO DE TELEFONE ===
+    # --- Identificação do remetente ---
     sender_phone = (
         payload.get("telefone") or
         payload.get("phone") or
@@ -70,6 +89,9 @@ def webhook_handler():
         payload.get("from") or
         payload.get("sender", {}).get("id")
     )
+
+    if isinstance(sender_phone, str):
+        sender_phone = sender_phone.split("@")[0]
 
     from_me = payload.get("fromMe", False)
 
@@ -80,36 +102,39 @@ def webhook_handler():
         print("⚠️ Payload ignorado: sem mensagem, sem telefone ou enviado por mim.")
         return jsonify({"status": "ignored"}), 200
 
-    sender_phone = str(sender_phone).split('@')[0]
+    # --- Histórico + IA ---
+    try:
+        history = get_conversation_history(sender_phone)
+        add_message_to_history(sender_phone, "user", user_message)
 
-    # === HISTÓRICO + GERAÇÃO DE RESPOSTA ===
-    history = get_conversation_history(sender_phone)
-    add_message_to_history(sender_phone, "user", user_message)
+        print(f"🤖 Enviando para IA: '{user_message[:50]}' com histórico de {len(history)} mensagens.")
+        resposta = gerar_resposta_openrouter(user_message, history)
 
-    ai_response = gerar_resposta_openrouter(user_message, history)
-    if not ai_response:
-        print("⚠️ IA não respondeu.")
-        return jsonify({"status": "no response"}), 200
+        if resposta:
+            add_message_to_history(sender_phone, "assistant", resposta)
+            send_zapi_message(
+                phone=sender_phone,
+                message=resposta,
+                instance_id=ZAPI_INSTANCE_ID,
+                token=ZAPI_TOKEN,
+                base_url=ZAPI_BASE_URL
+            )
+            print("✅ Resposta enviada com sucesso.")
+        else:
+            print("⚠️ IA não respondeu.")
+    except Exception as e:
+        print(f"❌ Erro geral no processamento do webhook: {e}")
 
-    print(f"🤖 Resposta da IA: {ai_response[:80]}")
-    add_message_to_history(sender_phone, "assistant", ai_response)
-
-    success = send_zapi_message(
-        phone=sender_phone,
-        message=ai_response,
-        instance_id=ZAPI_INSTANCE_ID,
-        token=ZAPI_TOKEN,
-        base_url=ZAPI_BASE_URL
-    )
-
-    print("✅ Mensagem enviada com sucesso." if success else "❌ Falha no envio.")
     return jsonify({"status": "ok"}), 200
 
-# === ROTA DE SAÚDE ===
+
+# --- Health Check ---
 @app.route('/', methods=['GET'])
-def health_check():
+def health():
+    print("🩺 Health check solicitado.")
     return jsonify({"status": "ok", "message": "Servidor Dra. Ana rodando!"}), 200
 
-# === EXECUÇÃO LOCAL ===
+
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=APP_PORT, debug=True)
+    print(f"🚀 Iniciando servidor Flask em http://0.0.0.0:{APP_PORT}")
+    app.run(host='0.0.0.0', port=APP_PORT, debug=True)
