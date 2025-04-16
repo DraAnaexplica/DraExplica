@@ -1,4 +1,3 @@
-# app.py (Versão robusta com verificação de JSON e logs seguros)
 import os
 import json
 from flask import Flask, request, jsonify
@@ -38,7 +37,6 @@ def webhook_handler():
     print("===================================")
     print("🔔 Webhook Recebido! (POST)")
 
-    # Força leitura bruta e parse manual do JSON
     try:
         raw_data = request.get_data(as_text=True)
         print("📦 Dados recebidos (brutos):", raw_data)
@@ -47,18 +45,22 @@ def webhook_handler():
         print("❌ Erro ao parsear JSON:", e)
         return jsonify({"status": "error", "message": "invalid JSON"}), 400
 
-    # Tentativa de extração com fallback seguro
+    # Correção do campo de mensagem
     user_message = (
         payload.get("texto", {}).get("mensagem") or
         payload.get("message", {}).get("body") or
         payload.get("message")
     )
+
+    # Correção do campo de telefone
     sender_phone = (
         payload.get("telefone") or
+        payload.get("phone") or
         payload.get("author") or
         payload.get("from") or
         payload.get("sender", {}).get("id")
     )
+
     from_me = payload.get("fromMe", False)
 
     print(f"   -> Verificando: user_message='{user_message}', sender_phone='{sender_phone}', from_me={from_me}")
