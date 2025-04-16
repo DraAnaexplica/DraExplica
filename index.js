@@ -2,17 +2,8 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
 import axios from 'axios';
-import { pool } from './db.js'; // <-- Conexão PostgreSQL
 
 dotenv.config();
-
-// 🔍 Teste das variáveis do .env
-console.log('\n🧪 VERIFICAÇÃO DE VARIÁVEIS .env');
-console.log('OPENROUTER_API_KEY =>', process.env.OPENROUTER_API_KEY);
-console.log('DATABASE_URL =>', process.env.DATABASE_URL);
-console.log('ZAPI_INSTANCE_ID =>', process.env.ZAPI_INSTANCE_ID);
-console.log('PORT =>', process.env.PORT);
-console.log('------------------------------------\n');
 
 const app = express();
 app.use(bodyParser.json());
@@ -66,7 +57,7 @@ async function getAIResponse(message) {
 // --- Enviar mensagem via Z-API ---
 async function sendZapiMessage(phone, message) {
   try {
-    const response = await axios.post(
+    await axios.post(
       `https://api.z-api.io/instances/${process.env.ZAPI_INSTANCE_ID}/token/${process.env.ZAPI_INSTANCE_TOKEN}/send-text`,
       { phone, message },
       {
@@ -100,39 +91,8 @@ app.post('/on-new-message', async (req, res) => {
   const aiReply = await getAIResponse(userMessage);
   console.log(`🤖 Dra. Ana: ${aiReply}`);
 
-  // --- Salvar resposta da IA no PostgreSQL ---
-  try {
-    await pool.query(
-      'INSERT INTO chat_history (phone, message, sender) VALUES ($1, $2, $3)',
-      [phone, aiReply, 'bot']
-    );
-  } catch (err) {
-    console.error('❌ ERRO ao salvar no PostgreSQL:', err.message);
-  }
-
   await sendZapiMessage(phone, aiReply);
   res.sendStatus(200);
-});
-
-// --- Criar tabela no PostgreSQL ---
-app.get('/criar-tabela', async (req, res) => {
-  try {
-    const query = `
-      CREATE TABLE IF NOT EXISTS chat_history (
-        id SERIAL PRIMARY KEY,
-        phone VARCHAR(20),
-        message TEXT,
-        sender VARCHAR(10),
-        timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-      );`;
-
-    await pool.query(query);
-    console.log('✅ Tabela chat_history criada ou já existia.');
-    res.status(200).send('Tabela criada com sucesso.');
-  } catch (err) {
-    console.error('❌ ERRO ao criar tabela:', err);
-    res.status(500).send('Erro ao criar tabela.');
-  }
 });
 
 // --- Start ---
