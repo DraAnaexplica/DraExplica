@@ -9,14 +9,14 @@ app = Flask(__name__)
 
 # --- Configurações ---
 ZAPI_INSTANCE_ID = os.getenv('ZAPI_INSTANCE_ID')
-ZAPI_CLIENT_TOKEN = os.getenv('ZAPI_CLIENT_TOKEN')  # Token da instância
+ZAPI_CLIENT_TOKEN = os.getenv('ZAPI_CLIENT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'openai/gpt-3.5-turbo')
 
 ZAPI_SEND_TEXT_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_CLIENT_TOKEN}/send-text"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# --- Chamada à IA ---
+# --- Função IA ---
 def get_openrouter_response(message_text):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -34,11 +34,11 @@ def get_openrouter_response(message_text):
         print(f"[ERRO] OpenRouter: {e}")
         return None
 
-# --- Envio via Z-API ---
+# --- Enviar mensagem via Z-API ---
 def send_zapi_message(phone_number, message_text):
     headers = {
         "Content-Type": "application/json",
-        "client-token": ZAPI_CLIENT_TOKEN  # ⚠️ Cabeçalho obrigatório segundo a documentação
+        "client-token": ZAPI_CLIENT_TOKEN  # Cabeçalho obrigatório
     }
     payload = {
         "phone": phone_number,
@@ -48,13 +48,12 @@ def send_zapi_message(phone_number, message_text):
         print(f"📤 Enviando para {phone_number}: {message_text[:60]}...")
         response = requests.post(ZAPI_SEND_TEXT_URL, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
-        print(f"✅ Mensagem enviada com sucesso.")
         return True
     except Exception as e:
-        print(f"[ERRO] Envio Z-API: {e}")
+        print(f"[ERRO] ao enviar resposta Z-API: {e}")
         return False
 
-# --- Webhook ---
+# --- Webhook principal ---
 @app.route('/webhook', methods=['POST'])
 def zapi_webhook():
     try:
@@ -64,7 +63,9 @@ def zapi_webhook():
 
         from_me = data.get("fromMe", False)
         sender_phone = data.get("phone")
-        user_message = data.get("texto", {}).get("mensagem")
+        texto = data.get("texto", {})
+
+        user_message = texto.get("mensagem") if isinstance(texto, dict) else None
 
         print(f"-> user_message: {user_message}, sender_phone: {sender_phone}, from_me: {from_me}")
 
@@ -84,6 +85,35 @@ def zapi_webhook():
         return jsonify({"status": "erro"}), 500
 
     return jsonify({"status": "success"}), 200
+
+# --- ROTA PARA REGISTRAR O WEBHOOK AUTOMATICAMENTE ---
+@app.route('/registrar-webhook', methods=['GET'])
+def registrar_webhook():
+    try:
+        instance_id = ZAPI_INSTANCE_ID
+        instance_token = ZAPI_CLIENT_TOKEN
+        webhook_url = f"https://api.z-api.io/instances/{instance_id}/token/{instance_token}/update-webhook-received"
+
+        payload = {
+            "value": "https://draana-whatsapp.onrender.com/webhook"  # seu domínio no Render
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "client-token": instance_token
+        }
+
+        response = requests.put(webhook_url, headers=headers, json=payload)
+        print(f"[WEBHOOK] Status: {response.status_code} - {response.text}")
+
+        return jsonify({
+            "status": "Webhook registrado com sucesso",
+            "zapi_response": response.text
+        })
+
+    except Exception as e:
+        print(f"[ERRO] Registro do webhook: {e}")
+        return jsonify({"erro": str(e)}), 500
 
 # --- Execução local ---
 if __name__ == '__main__':
