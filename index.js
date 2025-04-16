@@ -1,3 +1,5 @@
+// index.js
+
 import express from 'express';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
@@ -34,8 +36,14 @@ async function getAIResponse(message) {
       {
         model: process.env.OPENROUTER_MODEL,
         messages: [
-          { role: 'system', content: promptDraAna },
-          { role: 'user', content: message }
+          {
+            role: 'system',
+            content: promptDraAna
+          },
+          {
+            role: 'user',
+            content: message
+          }
         ]
       },
       {
@@ -57,9 +65,12 @@ async function getAIResponse(message) {
 // --- Enviar mensagem via Z-API ---
 async function sendZapiMessage(phone, message) {
   try {
-    await axios.post(
+    const response = await axios.post(
       `https://api.z-api.io/instances/${process.env.ZAPI_INSTANCE_ID}/token/${process.env.ZAPI_INSTANCE_TOKEN}/send-text`,
-      { phone, message },
+      {
+        phone: phone,
+        message: message
+      },
       {
         headers: {
           'Content-Type': 'application/json',
